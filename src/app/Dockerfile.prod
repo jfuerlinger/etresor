@@ -1,0 +1,68 @@
+# pull official base image
+FROM node:16-alpine3.11 AS builder
+
+# set working directory
+WORKDIR /app
+
+# install app dependencies
+ENV PATH /app/node_modules/.bin:$PATH
+
+# copies package.json and package-lock.json to docker environment
+COPY package*.json ./
+
+# installs all node packages
+RUN npm install
+
+# copies everything over to the docker environment
+COPY . ./
+
+# executes a production build
+RUN npm run build
+
+
+FROM alpine:latest
+
+ARG FILENAME="nginx-1.21.1"
+ARG EXTENSION="tar.gz"
+
+ADD https://nginx.org/download/${FILENAME}.${EXTENSION} .
+
+# build nginx
+RUN apk add --no-cache pcre zlib && \
+    apk add --no-cache \
+            --virtual .build-deps \
+            build-base \ 
+            pcre-dev \
+            zlib-dev \
+            openssl-dev && \
+    tar -xvf ${FILENAME}.${EXTENSION} && rm ${FILENAME}.${EXTENSION} && \
+    cd ${FILENAME} && \
+    ./configure \
+        --sbin-path=/usr/bin/nginx \
+        --conf-path=/etc/nginx/nginx.conf \
+        --error-log-path=/var/log/nginx/error.log \
+        --http-log-path=/var/log/nginx/access.log \
+        --with-pcre \
+        --pid-path=/var/run/nginx.pid \
+        --with-debug \
+        --with-http_ssl_module && \
+    make && make install && \
+    cd / && rm -rfv /${FILENAME} && \
+    apk del .build-deps
+
+# copies React to the container directory
+# set working directory to nginx resources directory
+WORKDIR /usr/local/nginx/html
+
+# remove default nginx static resources
+RUN rm -rf ./*
+
+# copies static resources from builder stage
+COPY --from=builder /app/build .
+
+EXPOSE 80
+
+# Containers run nginx with global directives and daemon off
+ENTRYPOINT ["nginx", "-g", "daemon off;"]
+
+
